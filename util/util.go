@@ -3,6 +3,7 @@ package util
 
 import (
 	"os"
+	"strings"
 )
 
 // FileExists returns true if a file with the given filename exists
@@ -22,4 +23,8 @@ func RemoveString(s []string, r string) []string {
 		}
 	}
 	return s
+}
+
+func ShortURL(s string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(s, "http://"), "https://")
 }

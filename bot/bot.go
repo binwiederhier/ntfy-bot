@@ -2,14 +2,19 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	_ "embed" // go:embed requires this
+	"errors"
 	"fmt"
+	"github.com/google/shlex"
+	"github.com/urfave/cli/v2"
 	"golang.org/x/sync/errgroup"
 	"log"
 	"ntfy-bot/client"
 	"ntfy-bot/config"
 	"ntfy-bot/util"
+	"strings"
 	"sync"
 )
 
@@ -91,27 +96,17 @@ func (b *Bot) handleChatEvent(e event) error {
 }
 
 func (b *Bot) handleChatMessageEvent(ev *messageEvent) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	log.Printf("%#v", ev)
-	topicURL := "https://ntfy.sh/mytopic"
-	if ev.Message == "sub" {
-		log.Printf("Subscribing to %s in channel %s", topicURL, ev.Channel)
-		if _, ok := b.subscriptions[topicURL]; !ok {
-			b.client.Subscribe(topicURL)
-			b.subscriptions[topicURL] = make([]string, 0)
-		}
-		b.subscriptions[topicURL] = append(b.subscriptions[topicURL], ev.Channel)
-	} else if ev.Message == "unsub" {
-		log.Printf("Unsubscribing from %s in channel %s", topicURL, ev.Channel)
-		if _, ok := b.subscriptions[topicURL]; ok {
-			b.subscriptions[topicURL] = util.RemoveString(b.subscriptions[topicURL], ev.Channel)
-			if len(b.subscriptions[topicURL]) == 0 {
-				log.Printf("No more subscriptions to topic %s; terminating connection", topicURL)
-				b.client.Unsubscribe(topicURL)
-				delete(b.subscriptions, topicURL)
-			}
-		}
+	fields := strings.Fields(ev.Message)
+	if len(fields) == 0 || fields[0] != b.conn.MentionBot() {
+		return nil
+	}
+	args, err := shlex.Split(ev.Message)
+	if err != nil {
+		return err
+	}
+	if err := b.runCLI(ev.Channel, args); err != nil {
+		return b.conn.Send(ev.Channel, err.Error())
 	}
 	return nil
 }
@@ -136,11 +131,107 @@ func (b *Bot) handleSubscriptionMessage(m *client.Message) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	log.Printf("Forwarding incoming message to chat: %s", m.Message)
-	topicURL := "https://ntfy.sh/mytopic"
+	topicURL := "https://ntfy.sh/" + m.Topic
+	message := fmt.Sprintf("**%s**\n%s", util.ShortURL(topicURL), m.Message)
 	if _, ok := b.subscriptions[topicURL]; ok {
 		for _, channel := range b.subscriptions[topicURL] {
-			b.conn.Send(channel, m.Message)
+			b.conn.Send(channel, message)
 		}
 	}
 	return nil
 }
+
+func (b *Bot) runCLI(channel string, args []string) error {
+	var buf bytes.Buffer
+	app := &cli.App{
+		Name:                   "ntfy",
+		Usage:                  "Bot for sending and receiving messages to/from ntfy",
+		UsageText:              "ntfy [OPTION..]",
+		UseShortOptionHandling: true,
+		Reader: &buf,
+		Writer: &buf,
+		ErrWriter: &buf,
+		Commands: []*cli.Command{
+			{
+				Name:      "subscribe",
+				Aliases:   []string{"sub", "add"},
+				Usage:     "xxxxxxx",
+				UsageText: "ntfy subscribe [--server=...] TOPIC",
+				Action:    func (c *cli.Context) error {
+					return b.execSubscribe(c, channel)
+				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "server", Aliases: []string{"s"}, Value: b.config.BaseURL, Usage: "server URL"},
+				},
+				Description: `xxxxxxxxx`,
+			},
+			{
+				Name:      "unsubscribe",
+				Aliases:   []string{"del", "rm"},
+				Usage:     "xxxxxxx",
+				UsageText: "ntfy unsubscribe [--server=...] TOPIC",
+				Action:    func (c *cli.Context) error {
+					return b.execUnsubscribe(c, channel)
+				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "server", Aliases: []string{"s"}, Value: b.config.BaseURL, Usage: "server URL"},
+				},
+				Description: `xxxxxxxxx`,
+			},
+		},
+		CommandNotFound: func(c *cli.Context, s string) {
+			if err := b.execCommandNotFound(c, channel, s); err != nil {
+				log.Printf("error executing command not found function: %s", err.Error())
+			}
+		},
+	}
+	err := app.Run(args)
+	if buf.Len() > 0 {
+		_ = b.conn.Send(channel, buf.String())
+	}
+	return err
+}
+
+func (b *Bot) execSubscribe(c *cli.Context, channel string) error {
+	baseURL := c.String("server")
+	if c.NArg() < 1 {
+		return errors.New("missing server address, see --help for usage details")
+	}
+	topic := c.Args().First()
+	topicURL := fmt.Sprintf("%s/%s", baseURL, topic)
+	log.Printf("Subscribing to %s in channel %s", topicURL, channel)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.subscriptions[topicURL]; !ok {
+		b.client.Subscribe(topicURL)
+		b.subscriptions[topicURL] = make([]string, 0)
+	}
+	b.subscriptions[topicURL] = append(b.subscriptions[topicURL], channel)
+	return b.conn.Send(channel, fmt.Sprintf("Subscribed to %s", util.ShortURL(topicURL)))
+}
+
+func (b *Bot) execUnsubscribe(c *cli.Context, channel string) error {
+	baseURL := c.String("server")
+	if c.NArg() < 1 {
+		return errors.New("missing server address, see --help for usage details")
+	}
+	topic := c.Args().First()
+	topicURL := fmt.Sprintf("%s/%s", baseURL, topic)
+	log.Printf("Unsubscribing from %s in channel %s", topicURL, channel)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.subscriptions[topicURL]; ok {
+		b.subscriptions[topicURL] = util.RemoveString(b.subscriptions[topicURL], channel)
+		if len(b.subscriptions[topicURL]) == 0 {
+			log.Printf("No more subscriptions to topic %s; terminating connection", topicURL)
+			b.client.Unsubscribe(topicURL)
+			delete(b.subscriptions, topicURL)
+		}
+	}
+	return b.conn.Send(channel, fmt.Sprintf("Unsubscribed from %s", util.ShortURL(topicURL)))
+}
+
+func (b *Bot) execCommandNotFound(c *cli.Context, channel string, s string) error {
+	return b.conn.Send(channel, "command not found")
+}
+

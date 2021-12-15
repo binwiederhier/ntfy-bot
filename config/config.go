@@ -13,8 +13,13 @@ const (
 	Mem     = Platform("mem")
 )
 
+const (
+	DefaultBaseURL = "https://ntfy.sh"
+)
+
 type Config struct {
 	Token              string
+	BaseURL string
 	Debug              bool
 }
 
@@ -22,6 +27,7 @@ type Config struct {
 func New(token string) *Config {
 	return &Config{
 		Token:              token,
+		BaseURL: DefaultBaseURL,
 	}
 }
 

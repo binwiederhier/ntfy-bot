@@ -16,7 +16,7 @@ var (
 )
 
 func main() {
-	cli.AppHelpTemplate += fmt.Sprintf(`
+cli.AppHelpTemplate += fmt.Sprintf(`
 Try 'ntfybot COMMAND --help' for more information.
 
 ntfybot %s (%s), runtime %s, built at %s

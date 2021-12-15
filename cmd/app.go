@@ -11,8 +11,6 @@ import (
 	"ntfy-bot/config"
 	"ntfy-bot/util"
 	"os"
-	"os/signal"
-	"syscall"
 )
 
 // New creates a new CLI application
@@ -56,15 +54,6 @@ func execRun(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-
-	// Set up signal handling
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigs // Doesn't matter which
-		log.Printf("Signal received. Closing all active sessions.")
-		robot.Stop()
-	}()
 
 	// Run main bot, can be killed by signal
 	if err := robot.Run(); err != nil {
