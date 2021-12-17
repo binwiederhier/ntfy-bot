@@ -22,6 +22,9 @@ type Message struct {
 	Event string
 	Topic string
 	Message string
+	Title string
+	Priority int
+	Tags []string
 }
 
 type subscription struct {
@@ -33,6 +36,23 @@ func New() *Client {
 		Messages: make(chan *Message),
 		subscriptions: make(map[string]*subscription),
 	}
+}
+
+func (c *Client) Publish(topicURL string, message string, options ...MessageOption) error {
+	req, _ := http.NewRequest("POST", topicURL, strings.NewReader(message))
+	for _, option := range options {
+		if err := option(req); err != nil {
+			return err
+		}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode > 299 {
+		return fmt.Errorf("unexpected response %d from server", resp.StatusCode)
+	}
+	return err
 }
 
 func (c *Client) Subscribe(topicURL string) {

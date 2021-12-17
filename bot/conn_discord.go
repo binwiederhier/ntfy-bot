@@ -70,6 +70,10 @@ func (c *discordConn) SendWithID(channel string, message string) (string, error)
 	return msg.ID, nil
 }
 
+func (c *discordConn) React(channelID string, messageID, emoji string) error {
+	return c.session.MessageReactionAdd(channelID, messageID, emoji)
+}
+
 func (c *discordConn) Close() error {
 	return c.session.Close()
 }
